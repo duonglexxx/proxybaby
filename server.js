@@ -14,27 +14,19 @@ app.use(express.json());
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
 const NIM_API_KEY = process.env.NIM_API_KEY;
 
-// 🔥 Toggles
-const SHOW_REASONING = false;  // Bật để xem thinking
-const ENABLE_THINKING_MODE = false;  // Bật thinking cho DeepSeek
-
-// 🔥 Model Mapping - Chỉ giữ DeepSeek và GLM
+// Model mapping - Đơn giản và gọn
 const MODEL_MAPPING = {
   'deepseek-v4': 'deepseek-ai/deepseek-v4-flash',
   'glm-5.2': 'z-ai/glm-5.2'
 };
 
-// ============================================
-// 🔥 FIX CHO JANITOR AI - Redirect root → /v1/chat/completions
-// ============================================
+// Redirect root to chat completions (fix cho Janitor AI)
 app.post('/', (req, res, next) => {
-  console.log('🔄 Redirect POST / → /v1/chat/completions');
   req.url = '/v1/chat/completions';
   next('route');
 });
 
 app.post('/v1', (req, res, next) => {
-  console.log('🔄 Redirect POST /v1 → /v1/chat/completions');
   req.url = '/v1/chat/completions';
   next('route');
 });
@@ -44,8 +36,6 @@ app.get('/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     service: 'OpenAI to NVIDIA NIM Proxy',
-    reasoning_display: SHOW_REASONING,
-    thinking_mode: ENABLE_THINKING_MODE,
     models: Object.keys(MODEL_MAPPING)
   });
 });
@@ -61,48 +51,20 @@ app.get('/v1/models', (req, res) => {
   res.json({ object: 'list', data: models });
 });
 
-// ============================================
-// 🔥 MAIN CHAT COMPLETIONS ENDPOINT
-// ============================================
+// Chat completions - Main endpoint
 app.post('/v1/chat/completions', async (req, res) => {
   try {
     const { model, messages, temperature, max_tokens, stream } = req.body;
     
     // Chọn model
-    let nimModel = MODEL_MAPPING[model] || 'deepseek-ai/deepseek-v4-flash';
+    const nimModel = MODEL_MAPPING[model] || 'deepseek-ai/deepseek-v4-flash';
     
-    // Cấu hình riêng cho từng model
-    let config = {
-      temperature: temperature || 0.7,
-      max_tokens: max_tokens || 8192,
-    };
-
-    if (nimModel === 'deepseek-ai/deepseek-v4-flash') {
-      config = {
-        ...config,
-        temperature: temperature || 1.0,
-        max_tokens: max_tokens || 16384,
-        top_p: 0.95,
-        chat_template_kwargs: { thinking: true, reasoning_effort: "high" }
-      };
-    } else if (nimModel === 'z-ai/glm-5.2') {
-      config = {
-        ...config,
-        temperature: temperature || 0.8,
-        max_tokens: max_tokens || 8192,
-        top_p: 0.9,
-        chat_template_kwargs: { enable_thinking: true }
-      };
-    }
-
-    // Build request
+    // Build request đơn giản
     const nimRequest = {
       model: nimModel,
       messages: messages,
-      temperature: config.temperature,
-      max_tokens: config.max_tokens,
-      top_p: config.top_p || 0.95,
-      ...(config.chat_template_kwargs && { chat_template_kwargs: config.chat_template_kwargs }),
+      temperature: temperature || 0.7,
+      max_tokens: max_tokens || 4096,
       stream: stream || false
     };
 
@@ -115,17 +77,16 @@ app.post('/v1/chat/completions', async (req, res) => {
         'Content-Type': 'application/json'
       },
       responseType: stream ? 'stream' : 'json',
-      timeout: 120000
+      timeout: 60000
     });
 
     if (stream) {
-      // Xử lý stream (giữ nguyên)
+      // Xử lý streaming
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
       
       let buffer = '';
-      let reasoningStarted = false;
       
       response.data.on('data', (chunk) => {
         buffer += chunk.toString();
@@ -138,39 +99,7 @@ app.post('/v1/chat/completions', async (req, res) => {
               res.write(line + '\n');
               return;
             }
-            try {
-              const data = JSON.parse(line.slice(6));
-              if (data.choices?.[0]?.delta) {
-                const reasoning = data.choices[0].delta.reasoning_content;
-                const content = data.choices[0].delta.content;
-                
-                if (SHOW_REASONING) {
-                  let combinedContent = '';
-                  if (reasoning && !reasoningStarted) {
-                    combinedContent = '🧠 Thinking:\n' + reasoning;
-                    reasoningStarted = true;
-                  } else if (reasoning) {
-                    combinedContent = reasoning;
-                  }
-                  if (content && reasoningStarted) {
-                    combinedContent += '\n\n💬 Response:\n' + content;
-                    reasoningStarted = false;
-                  } else if (content) {
-                    combinedContent += content;
-                  }
-                  if (combinedContent) {
-                    data.choices[0].delta.content = combinedContent;
-                    delete data.choices[0].delta.reasoning_content;
-                  }
-                } else {
-                  data.choices[0].delta.content = content || '';
-                  delete data.choices[0].delta.reasoning_content;
-                }
-              }
-              res.write(`data: ${JSON.stringify(data)}\n\n`);
-            } catch (e) {
-              res.write(line + '\n');
-            }
+            res.write(line + '\n');
           }
         });
       });
@@ -187,17 +116,14 @@ app.post('/v1/chat/completions', async (req, res) => {
         object: 'chat.completion',
         created: Math.floor(Date.now() / 1000),
         model: model,
-        choices: response.data.choices.map(choice => {
-          let fullContent = choice.message?.content || '';
-          if (SHOW_REASONING && choice.message?.reasoning_content) {
-            fullContent = '🧠 Thinking:\n' + choice.message.reasoning_content + '\n\n💬 Response:\n' + fullContent;
-          }
-          return {
-            index: choice.index,
-            message: { role: choice.message.role, content: fullContent },
-            finish_reason: choice.finish_reason
-          };
-        }),
+        choices: response.data.choices.map(choice => ({
+          index: choice.index,
+          message: {
+            role: choice.message.role,
+            content: choice.message?.content || ''
+          },
+          finish_reason: choice.finish_reason
+        })),
         usage: response.data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
       };
       res.json(openaiResponse);
@@ -209,6 +135,7 @@ app.post('/v1/chat/completions', async (req, res) => {
       console.error('Status:', error.response.status);
       console.error('Data:', JSON.stringify(error.response.data, null, 2));
     }
+    
     res.status(error.response?.status || 500).json({
       error: {
         message: error.message || 'Internal server error',
@@ -226,9 +153,9 @@ app.all('*', (req, res) => {
   });
 });
 
+// Start server
 app.listen(PORT, () => {
   console.log(`🚀 Proxy running on port ${PORT}`);
   console.log(`✅ Health: http://localhost:${PORT}/health`);
-  console.log(`🧠 Reasoning: ${SHOW_REASONING ? 'ENABLED' : 'DISABLED'}`);
-  console.log(`🤖 Models: DeepSeek-V4-Flash & Z.AI GLM-5.2`);
+  console.log(`🤖 Models: ${Object.keys(MODEL_MAPPING).join(', ')}`);
 });
