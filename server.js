@@ -20,38 +20,15 @@ const SHOW_REASONING = false; // Set to true to show reasoning with <think> tags
 // 🔥 THINKING MODE TOGGLE - Enables thinking for specific models that support it
 const ENABLE_THINKING_MODE = false; // Set to true to enable chat_template_kwargs thinking parameter
 
-// Model mapping mới nhất (cập nhật 2026)
+// Model mapping (adjust based on available NIM models)
 const MODEL_MAPPING = {
-  // OpenAI Models
-  'gpt-3.5-turbo': 'nvidia/llama-3.3-nemotron-super-49b-v1',
-  'gpt-4': 'meta/llama-3.3-70b-instruct',
-  'gpt-4-turbo': 'nvidia/nemotron-4-340b-instruct',
-  'gpt-4o': 'meta/llama-4-scout-17b-16e-instruct',
-  'gpt-4.5': 'meta/llama-4-maverick-17b-128e-instruct',
-  'o1-preview': 'deepseek-ai/deepseek-v3.1',
-  'o1-mini': 'deepseek-ai/deepseek-r1-distill-qwen-32b',
-  
-  // Claude Models  
-  'claude-3-opus': 'nvidia/nemotron-4-340b-instruct',
-  'claude-3-sonnet': 'meta/llama-3.3-70b-instruct',
-  'claude-3-haiku': 'meta/llama-3.2-3b-instruct',
-  'claude-3.5-sonnet': 'meta/llama-4-scout-17b-16e-instruct',
-  
-  // Google Models
-  'gemini-pro': 'google/gemma-2-27b-it',
-  'gemini-1.5-pro': 'google/gemma-2-27b-it',
-  'gemini-1.5-flash': 'google/gemma-2-9b-it',
-  
-  // Other Popular Models
-  'llama-3.3-70b': 'meta/llama-3.3-70b-instruct',
-  'llama-4-scout': 'meta/llama-4-scout-17b-16e-instruct',
-  'llama-4-maverick': 'meta/llama-4-maverick-17b-128e-instruct',
-  'deepseek-v3.1': 'deepseek-ai/deepseek-v3.1',
-  'deepseek-r1': 'deepseek-ai/deepseek-r1-distill-qwen-32b',
-  'qwen-2.5-72b': 'qwen/qwen-2.5-72b-instruct',
-  'qwen-2.5-coder-32b': 'qwen/qwen-2.5-coder-32b-instruct',
-  'mistral-large': 'mistralai/mistral-large-2-instruct',
-  'mixtral-8x7b': 'mistralai/mixtral-8x7b-instruct-v0.1'
+  'gpt-3.5-turbo': 'nvidia/llama-3.1-nemotron-ultra-253b-v1',
+  'gpt-4': 'qwen/qwen3-coder-480b-a35b-instruct',
+  'gpt-4-turbo': 'moonshotai/kimi-k2-instruct-0905',
+  'deepseek-3.2': 'deepseek-ai/deepseek-v3.2',
+  'claude-3-opus': 'openai/gpt-oss-120b',
+  'claude-3-sonnet': 'openai/gpt-oss-20b',
+  'gemini-pro': 'qwen/qwen3-next-80b-a3b-thinking' 
 };
 
 // Health check endpoint
@@ -60,8 +37,7 @@ app.get('/health', (req, res) => {
     status: 'ok', 
     service: 'OpenAI to NVIDIA NIM Proxy', 
     reasoning_display: SHOW_REASONING,
-    thinking_mode: ENABLE_THINKING_MODE,
-    version: '2.0'
+    thinking_mode: ENABLE_THINKING_MODE
   });
 });
 
@@ -105,12 +81,12 @@ app.post('/v1/chat/completions', async (req, res) => {
       
       if (!nimModel) {
         const modelLower = model.toLowerCase();
-        if (modelLower.includes('gpt-4') || modelLower.includes('claude-opus') || modelLower.includes('claude-3.5') || modelLower.includes('405b') || modelLower.includes('70b') || modelLower.includes('deepseek')) {
-          nimModel = 'meta/llama-3.3-70b-instruct';
-        } else if (modelLower.includes('claude') || modelLower.includes('gemini') || modelLower.includes('32b')) {
-          nimModel = 'qwen/qwen-2.5-32b-instruct';
+        if (modelLower.includes('gpt-4') || modelLower.includes('claude-opus') || modelLower.includes('405b')) {
+          nimModel = 'meta/llama-3.1-405b-instruct';
+        } else if (modelLower.includes('claude') || modelLower.includes('gemini') || modelLower.includes('70b')) {
+          nimModel = 'meta/llama-3.1-70b-instruct';
         } else {
-          nimModel = 'meta/llama-3.2-3b-instruct';
+          nimModel = 'meta/llama-3.1-8b-instruct';
         }
       }
     }
@@ -121,13 +97,9 @@ app.post('/v1/chat/completions', async (req, res) => {
       messages: messages,
       temperature: temperature || 0.6,
       max_tokens: max_tokens || 9024,
+      extra_body: ENABLE_THINKING_MODE ? { chat_template_kwargs: { thinking: true } } : undefined,
       stream: stream || false
     };
-    
-    // Add extra_body if thinking mode enabled
-    if (ENABLE_THINKING_MODE) {
-      nimRequest.extra_body = { chat_template_kwargs: { thinking: true } };
-    }
     
     // Make request to NVIDIA NIM API
     const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
