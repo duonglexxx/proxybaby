@@ -2,175 +2,264 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenAI NIM Proxy</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>NIM Proxy - Dashboard</title>
     <link rel="stylesheet" href="style.css">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <div class="header-content">
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
                 <div class="logo">
-                    <div class="logo-icon">
-                        <i class="fas fa-brain"></i>
+                    <i class="fas fa-brain"></i>
+                    <span>NIM<span class="logo-highlight">Proxy</span></span>
+                </div>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <a href="#" class="nav-item active">
+                    <i class="fas fa-th-large"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="nav-item">
+                    <i class="fas fa-robot"></i>
+                    <span>Models</span>
+                </a>
+                <a href="#" class="nav-item">
+                    <i class="fas fa-code"></i>
+                    <span>API</span>
+                </a>
+                <a href="#" class="nav-item">
+                    <i class="fas fa-cog"></i>
+                    <span>Settings</span>
+                </a>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <div class="avatar">
+                        <span>AI</span>
                     </div>
                     <div>
-                        <h1>NIM Proxy</h1>
-                        <span class="badge">v1.0.0</span>
+                        <div class="user-name">NIM Proxy</div>
+                        <div class="user-role">v1.0.0</div>
                     </div>
                 </div>
-                <div class="header-status">
-                    <div class="status-indicator">
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Top Bar -->
+            <header class="top-bar">
+                <div class="top-bar-left">
+                    <button class="menu-toggle" id="menuToggle">
+                        <i class="fas fa-bars"></i>
+                    </button>
+                    <h2>Dashboard</h2>
+                </div>
+                <div class="top-bar-right">
+                    <div class="status-badge">
                         <span class="status-dot"></span>
                         <span>Operational</span>
                     </div>
+                    <button class="btn-icon" onclick="testConnection()">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
                 </div>
-            </div>
-        </header>
+            </header>
 
-        <!-- Hero Section -->
-        <section class="hero">
-            <h2>OpenAI Compatible API Proxy</h2>
-            <p>Connect to NVIDIA NIM models with a simple OpenAI-compatible interface</p>
-        </section>
+            <!-- Stats Grid -->
+            <section class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: rgba(108, 92, 231, 0.15); color: #6c5ce7;">
+                        <i class="fas fa-cube"></i>
+                    </div>
+                    <div>
+                        <div class="stat-label">Available Models</div>
+                        <div class="stat-value" id="modelCount">0</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: rgba(0, 212, 170, 0.15); color: #00d4aa;">
+                        <i class="fas fa-link"></i>
+                    </div>
+                    <div>
+                        <div class="stat-label">API Status</div>
+                        <div class="stat-value" style="color: #00d4aa; font-size: 14px;">Online</div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon" style="background: rgba(255, 107, 107, 0.15); color: #ff6b6b;">
+                        <i class="fas fa-clock"></i>
+                    </div>
+                    <div>
+                        <div class="stat-label">Uptime</div>
+                        <div class="stat-value" id="uptime">--</div>
+                    </div>
+                </div>
+            </section>
 
-        <!-- Main Grid -->
-        <div class="main-grid">
-            <!-- Models Card -->
-            <div class="card models-card">
-                <div class="card-header">
-                    <i class="fas fa-robot"></i>
-                    <h3>Available Models</h3>
-                </div>
-                <div class="models-list" id="modelsList">
-                    <div class="loading-spinner">
-                        <i class="fas fa-spinner fa-spin"></i>
-                        Loading models...
-                    </div>
-                </div>
-            </div>
-
-            <!-- API Info Card -->
-            <div class="card api-card">
-                <div class="card-header">
-                    <i class="fas fa-plug"></i>
-                    <h3>API Endpoint</h3>
-                </div>
-                <div class="api-info">
-                    <div class="endpoint">
-                        <span class="label">Base URL</span>
-                        <div class="endpoint-url">
-                            <code id="baseUrl">Loading...</code>
-                            <button class="copy-btn" onclick="copyToClipboard('baseUrl')">
-                                <i class="fas fa-copy"></i>
-                            </button>
+            <!-- Main Grid -->
+            <div class="content-grid">
+                <!-- Models Card -->
+                <div class="card models-card">
+                    <div class="card-header">
+                        <div class="card-header-left">
+                            <i class="fas fa-robot"></i>
+                            <h3>Available Models</h3>
                         </div>
+                        <span class="card-badge" id="modelBadge">Loading...</span>
                     </div>
-                    <div class="endpoint">
-                        <span class="label">Chat Completions</span>
-                        <div class="endpoint-url">
-                            <code id="chatUrl">Loading...</code>
-                            <button class="copy-btn" onclick="copyToClipboard('chatUrl')">
-                                <i class="fas fa-copy"></i>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Setup Guide Card -->
-            <div class="card guide-card">
-                <div class="card-header">
-                    <i class="fas fa-code"></i>
-                    <h3>Quick Setup Guide</h3>
-                </div>
-                <div class="guide-content">
-                    <div class="guide-step">
-                        <span class="step-number">1</span>
-                        <div>
-                            <h4>Set API Key</h4>
-                            <p>Use your NVIDIA NIM API key</p>
-                        </div>
-                    </div>
-                    <div class="guide-step">
-                        <span class="step-number">2</span>
-                        <div>
-                            <h4>Choose Model</h4>
-                            <p>Select from available models above</p>
-                        </div>
-                    </div>
-                    <div class="guide-step">
-                        <span class="step-number">3</span>
-                        <div>
-                            <h4>Make Request</h4>
-                            <p>Use standard OpenAI SDK or curl</p>
+                    <div class="models-list" id="modelsList">
+                        <div class="loading-spinner">
+                            <i class="fas fa-spinner fa-spin"></i>
+                            Loading models...
                         </div>
                     </div>
                 </div>
 
-                <div class="code-example">
-                    <div class="code-header">
-                        <span>cURL Example</span>
-                        <button class="copy-btn" onclick="copyToClipboard('curlExample')">
+                <!-- API Info Card -->
+                <div class="card api-card">
+                    <div class="card-header">
+                        <div class="card-header-left">
+                            <i class="fas fa-plug"></i>
+                            <h3>API Endpoint</h3>
+                        </div>
+                        <button class="btn-copy" onclick="copyToClipboard('baseUrl')">
                             <i class="fas fa-copy"></i>
                         </button>
                     </div>
-                    <pre id="curlExample"><code>curl https://<span id="hostname">your-domain</span>/v1/chat/completions \
+                    <div class="api-info">
+                        <div class="endpoint">
+                            <span class="label">Base URL</span>
+                            <div class="endpoint-url" id="baseUrl">
+                                <code>Loading...</code>
+                            </div>
+                        </div>
+                        <div class="endpoint">
+                            <span class="label">Chat Completions</span>
+                            <div class="endpoint-url" id="chatUrl">
+                                <code>Loading...</code>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Setup Card -->
+                <div class="card guide-card">
+                    <div class="card-header">
+                        <div class="card-header-left">
+                            <i class="fas fa-code"></i>
+                            <h3>Quick Setup</h3>
+                        </div>
+                    </div>
+                    
+                    <div class="guide-steps">
+                        <div class="guide-step">
+                            <div class="step-number">1</div>
+                            <div class="step-content">
+                                <h4>Set API Key</h4>
+                                <p>Use your NVIDIA NIM API key in requests</p>
+                            </div>
+                        </div>
+                        <div class="guide-step">
+                            <div class="step-number">2</div>
+                            <div class="step-content">
+                                <h4>Choose Model</h4>
+                                <p>Select from available models above</p>
+                            </div>
+                        </div>
+                        <div class="guide-step">
+                            <div class="step-number">3</div>
+                            <div class="step-content">
+                                <h4>Make Request</h4>
+                                <p>Use OpenAI SDK or cURL</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="code-examples">
+                        <div class="code-tabs">
+                            <button class="code-tab active" data-tab="curl">cURL</button>
+                            <button class="code-tab" data-tab="python">Python</button>
+                            <button class="code-tab" data-tab="javascript">JavaScript</button>
+                        </div>
+                        
+                        <div class="code-content">
+                            <pre id="curlExample" class="code-block active"><code>curl https://<span class="hostname-placeholder">your-domain</span>/v1/chat/completions \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_NIM_API_KEY" \
   -d '{
     "model": "deepseek-v4-flash",
-    "messages": [{"role": "user", "content": "Hello!"}]
+    "messages": [{"role": "user", "content": "Hello!"}],
+    "temperature": 0.7
   }'</code></pre>
-                </div>
-
-                <div class="code-example">
-                    <div class="code-header">
-                        <span>Python Example</span>
-                        <button class="copy-btn" onclick="copyToClipboard('pythonExample')">
-                            <i class="fas fa-copy"></i>
-                        </button>
-                    </div>
-                    <pre id="pythonExample"><code>from openai import OpenAI
+                            
+                            <pre id="pythonExample" class="code-block"><code>from openai import OpenAI
 
 client = OpenAI(
-    base_url="https://<span id="hostname2">your-domain</span>/v1",
-    api_key="your-nim-api-key"
+    base_url="https://<span class="hostname-placeholder">your-domain</span>/v1",
+    api_key="YOUR_NIM_API_KEY"
 )
 
 response = client.chat.completions.create(
     model="deepseek-v4-flash",
-    messages=[{"role": "user", "content": "Hello!"}]
-)</code></pre>
-                </div>
-            </div>
-
-            <!-- Test Card -->
-            <div class="card test-card">
-                <div class="card-header">
-                    <i class="fas fa-flask"></i>
-                    <h3>Test Connection</h3>
-                </div>
-                <div class="test-controls">
-                    <div class="test-status" id="testStatus">
-                        <i class="fas fa-circle-notch fa-spin"></i>
-                        <span>Ready to test</span>
+    messages=[{"role": "user", "content": "Hello!"}],
+    temperature=0.7
+)
+print(response.choices[0].message.content)</code></pre>
+                            
+                            <pre id="javascriptExample" class="code-block"><code>const response = await fetch(
+  'https://<span class="hostname-placeholder">your-domain</span>/v1/chat/completions',
+  {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer YOUR_NIM_API_KEY'
+    },
+    body: JSON.stringify({
+      model: 'deepseek-v4-flash',
+      messages: [{role: 'user', content: 'Hello!'}],
+      temperature: 0.7
+    })
+  }
+);
+const data = await response.json();
+console.log(data.choices[0].message.content);</code></pre>
+                        </div>
                     </div>
-                    <button class="btn btn-primary" onclick="testConnection()">
-                        <i class="fas fa-play"></i>
-                        Test Connection
-                    </button>
+                </div>
+
+                <!-- Test Connection Card -->
+                <div class="card test-card">
+                    <div class="card-header">
+                        <div class="card-header-left">
+                            <i class="fas fa-flask"></i>
+                            <h3>Test Connection</h3>
+                        </div>
+                    </div>
+                    <div class="test-content">
+                        <div class="test-status" id="testStatus">
+                            <i class="fas fa-circle-notch fa-spin"></i>
+                            <span>Ready to test</span>
+                        </div>
+                        <button class="btn btn-primary" onclick="testConnection()">
+                            <i class="fas fa-play"></i>
+                            Run Test
+                        </button>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Footer -->
-        <footer class="footer">
-            <p>Built with <i class="fas fa-heart" style="color: #ff6b6b;"></i> for NVIDIA NIM API</p>
-            <p class="footer-meta">Powered by Express.js</p>
-        </footer>
+            <!-- Footer -->
+            <footer class="footer">
+                <p>NVIDIA NIM Proxy &bull; Built with <i class="fas fa-heart" style="color: #ff6b6b;"></i></p>
+            </footer>
+        </main>
     </div>
 
     <script src="script.js"></script>
