@@ -1,4 +1,4 @@
-// server.js - OpenAI to NVIDIA NIM API Proxy
+// server.js - OpenAI to NVIDIA NIM API Proxy (Optimized)
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -23,22 +23,29 @@ class NIMProxyServer {
   setupMiddleware() {
     this.app.use(cors({
       origin: '*',
-      methods: ['POST', 'GET'],
-      allowedHeaders: ['Content-Type', 'Authorization']
+      methods: ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE'],
+      allowedHeaders: ['Content-Type', 'Authorization', 'Accept']
     }));
     this.app.use(express.json({ limit: '10mb' }));
     this.app.use(express.urlencoded({ extended: true }));
+    
+    // Logging middleware
+    this.app.use((req, res, next) => {
+      console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+      next();
+    });
   }
 
   setupRoutes() {
-    // Health check endpoint
+    // Health check
     this.app.get('/health', (req, res) => {
       res.json({
         status: 'operational',
         service: 'openai-nim-proxy',
         version: '1.0.0',
-        environment: process.env.NODE_ENV || 'development',
-        models: Object.keys(this.modelMapping)
+        uptime: process.uptime(),
+        models: Object.keys(this.modelMapping),
+        endpoints: ['/health', '/v1/models', '/v1/chat/completions', '/']
       });
     });
 
@@ -49,9 +56,7 @@ class NIMProxyServer {
         object: 'model',
         created: Math.floor(Date.now() / 1000),
         owned_by: 'nvidia-nim',
-        permission: [],
-        root: nimModel,
-        parent: null
+        root: nimModel
       }));
       
       res.json({
@@ -60,16 +65,41 @@ class NIMProxyServer {
       });
     });
 
+    // Support GET requests to root (for Janitor AI)
+    this.app.get('/', (req, res) => {
+      // Janitor AI might expect a response with available endpoints
+      res.json({
+        message: 'OpenAI to NVIDIA NIM Proxy',
+        documentation: 'Use POST /v1/chat/completions or POST /',
+        models: Object.keys(this.modelMapping),
+        endpoints: {
+          'POST /v1/chat/completions': 'Main chat completions endpoint',
+          'POST /': 'Alias for chat completions',
+          'GET /health': 'Health check',
+          'GET /v1/models': 'List available models'
+        }
+      });
+    });
+
+    // Handle root POST requests (for chat completions)
+    this.app.post('/', this.handleChatCompletion.bind(this));
+
+    // Handle root POST with different paths that Janitor might use
+    this.app.post('/v1', this.handleChatCompletion.bind(this));
+    this.app.post('/v1/chat', this.handleChatCompletion.bind(this));
+    this.app.post('/chat/completions', this.handleChatCompletion.bind(this));
+
     // Main chat completions endpoint
     this.app.post('/v1/chat/completions', this.handleChatCompletion.bind(this));
 
-    // Redirect root POST requests to chat completions
-    this.app.post('/', (req, res) => {
-      this.handleChatCompletion.call(this, req, res);
+    // Handle OPTIONS preflight requests
+    this.app.options('*', (req, res) => {
+      res.status(204).send();
     });
 
     // 404 handler
     this.app.use((req, res) => {
+      console.log(`404: ${req.method} ${req.path}`);
       res.status(404).json({
         error: {
           message: `Endpoint ${req.method} ${req.path} not found`,
@@ -94,38 +124,60 @@ class NIMProxyServer {
 
   async handleChatCompletion(req, res) {
     try {
-      const { model, messages, temperature = 0.7, max_tokens = 4096, stream = false } = req.body;
+      // Parse body - support both JSON and form data
+      let body = req.body;
+      if (req.method === 'GET') {
+        // If it's a GET request, try to parse query params
+        body = req.query;
+      }
+
+      const { 
+        model, 
+        messages, 
+        temperature = 0.7, 
+        max_tokens = 4096, 
+        stream = false,
+        seed = 0,
+        top_p = 1
+      } = body;
 
       // Input validation
       if (!messages || !Array.isArray(messages) || messages.length === 0) {
         return res.status(400).json({
           error: {
-            message: 'Invalid messages array',
+            message: 'Invalid messages array. Expected non-empty array of messages.',
             type: 'validation_error',
-            code: 400
+            code: 400,
+            received: messages
           }
         });
       }
 
-      const nimModel = this.modelMapping[model] || this.modelMapping['deepseek-v4-flash'];
+      // Get NIM model mapping
+      const nimModel = this.modelMapping[model] || model || 'moonshotai/kimi-k2.6';
       
+      // Build NIM request payload
       const nimRequestPayload = {
         model: nimModel,
         messages: this.cleanMessages(messages),
-        temperature: Math.min(Math.max(temperature, 0), 1),
-        max_tokens: Math.min(Math.max(max_tokens, 1), 16384),
-        stream: !!stream
+        temperature: Math.min(Math.max(parseFloat(temperature) || 0.7, 0), 1),
+        max_tokens: Math.min(Math.max(parseInt(max_tokens) || 4096, 1), 16384),
+        stream: Boolean(stream),
+        seed: parseInt(seed) || 0,
+        top_p: Math.min(Math.max(parseFloat(top_p) || 1, 0), 1)
       };
 
-      console.log(`[${new Date().toISOString()}] 🚀 ${model} → ${nimModel}`);
+      console.log(`[${new Date().toISOString()}] 🚀 ${model || 'default'} → ${nimModel}`);
+      console.log(`Messages: ${messages.length}, Tokens: ${max_tokens}, Stream: ${stream}`);
 
+      // Forward to NIM API
       const startTime = Date.now();
       const response = await this.forwardToNIM(nimRequestPayload, stream);
 
       if (stream) {
         await this.handleStreamResponse(response, res);
       } else {
-        await this.handleNonStreamResponse(response, res, model, startTime);
+        await this.handleNonStreamResponse(response, res, model || nimModel, startTime);
       }
 
     } catch (error) {
@@ -136,21 +188,27 @@ class NIMProxyServer {
   cleanMessages(messages) {
     return messages.map(msg => ({
       role: msg.role || 'user',
-      content: msg.content || ''
+      content: String(msg.content || '')
     })).filter(msg => msg.content.trim().length > 0);
   }
 
   async forwardToNIM(payload, stream) {
+    const headers = {
+      'Authorization': `Bearer ${this.nimApiKey}`,
+      'Content-Type': 'application/json',
+      'Accept': stream ? 'text/event-stream' : 'application/json'
+    };
+
+    console.log(`📤 Forwarding to NIM API: ${this.nimApiBase}/chat/completions`);
+    console.log(`📦 Payload:`, JSON.stringify(payload, null, 2));
+
     return await axios.post(
       `${this.nimApiBase}/chat/completions`,
       payload,
       {
-        headers: {
-          'Authorization': `Bearer ${this.nimApiKey}`,
-          'Content-Type': 'application/json'
-        },
+        headers: headers,
         responseType: stream ? 'stream' : 'json',
-        timeout: 120000, // 2 minutes timeout
+        timeout: 120000,
         maxRedirects: 3
       }
     );
@@ -162,6 +220,7 @@ class NIMProxyServer {
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
+      res.setHeader('Access-Control-Allow-Origin', '*');
 
       const stream = response.data;
       let buffer = '';
@@ -169,18 +228,19 @@ class NIMProxyServer {
       stream.on('data', (chunk) => {
         try {
           const chunkStr = chunk.toString();
-          const dataLines = chunkStr.split('\n').filter(line => line.trim() !== '');
+          const lines = chunkStr.split('\n').filter(line => line.trim() !== '');
           
-          dataLines.forEach(line => {
+          lines.forEach(line => {
             if (line.startsWith('data: ')) {
               const data = line.substring(6);
               if (data === '[DONE]') {
-                res.write(line + '\n');
+                res.write(line + '\n\n');
                 return;
               }
-              
-              // Forward the data as-is
               res.write(line + '\n\n');
+            } else if (line.trim() === '') {
+              // Keep empty lines for SSE format
+              res.write('\n');
             }
           });
         } catch (err) {
@@ -195,7 +255,7 @@ class NIMProxyServer {
 
       stream.on('error', (err) => {
         console.error('Stream error:', err);
-        res.write('data: [ERROR]\n\n');
+        res.write('event: error\ndata: {"error": "Stream interrupted"}\n\n');
         res.end();
       });
 
@@ -217,24 +277,31 @@ class NIMProxyServer {
       object: 'chat.completion',
       created: Math.floor(Date.now() / 1000),
       model: model,
-      choices: nimData.choices.map((choice, index) => ({
+      choices: nimData.choices?.map((choice, index) => ({
         index: index,
         message: {
-          role: choice.message.role || 'assistant',
-          content: choice.message.content || ''
+          role: choice.message?.role || 'assistant',
+          content: choice.message?.content || ''
         },
         finish_reason: choice.finish_reason || 'stop'
-      })),
+      })) || [{
+        index: 0,
+        message: {
+          role: 'assistant',
+          content: 'No response from NIM API'
+        },
+        finish_reason: 'error'
+      }],
       usage: {
         prompt_tokens: nimData.usage?.prompt_tokens || 0,
         completion_tokens: nimData.usage?.completion_tokens || 0,
         total_tokens: nimData.usage?.total_tokens || 0
       },
-      system_fingerprint: `nim_${Date.now()}`,
-      x_processing_time: Date.now() - startTime
+      system_fingerprint: `nim_${Date.now()}`
     };
 
     res.json(formattedResponse);
+    console.log(`✅ Response sent in ${Date.now() - startTime}ms`);
   }
 
   handleError(error, res) {
@@ -261,7 +328,7 @@ class NIMProxyServer {
       if (status === 401) {
         return res.status(401).json({
           error: {
-            message: 'Invalid API key',
+            message: 'Invalid NVIDIA API key. Please check your NIM_API_KEY environment variable.',
             type: 'authentication_error',
             code: 401
           }
@@ -271,7 +338,7 @@ class NIMProxyServer {
       if (status === 403) {
         return res.status(403).json({
           error: {
-            message: 'Access forbidden',
+            message: 'Access forbidden. Please check your API key permissions.',
             type: 'authorization_error',
             code: 403
           }
@@ -283,7 +350,7 @@ class NIMProxyServer {
           message: data.error?.message || data.message || 'NIM API error',
           type: 'nim_api_error',
           code: status,
-          details: data.error || data
+          details: data
         }
       });
     }
@@ -291,9 +358,19 @@ class NIMProxyServer {
     if (error.code === 'ECONNABORTED') {
       return res.status(504).json({
         error: {
-          message: 'Gateway timeout: NIM API took too long to respond',
+          message: 'Gateway timeout: NIM API took too long to respond (120s)',
           type: 'timeout_error',
           code: 504
+        }
+      });
+    }
+    
+    if (error.code === 'ENOTFOUND') {
+      return res.status(503).json({
+        error: {
+          message: 'Cannot reach NVIDIA NIM API. Check your network connection.',
+          type: 'network_error',
+          code: 503
         }
       });
     }
@@ -315,7 +392,8 @@ class NIMProxyServer {
       console.log(`🚀 Server running on port ${this.port}`);
       console.log(`📍 Health: http://localhost:${this.port}/health`);
       console.log(`🤖 Models: ${Object.keys(this.modelMapping).join(', ')}`);
-      console.log(`⚡ Status: ${this.nimApiKey ? '✅ NIM API Key configured' : '❌ Missing NIM API Key'}`);
+      console.log(`🔑 NIM API: ${this.nimApiKey ? '✅ Configured' : '❌ Missing'}`);
+      console.log(`📡 NIM Base: ${this.nimApiBase}`);
       console.log('────────────────────────────────────────────');
     });
 
