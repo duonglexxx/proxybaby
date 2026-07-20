@@ -1,1 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenAI NIM Proxy</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <div class="logo">
+                    <div class="logo-icon">
+                        <i class="fas fa-brain"></i>
+                    </div>
+                    <div>
+                        <h1>NIM Proxy</h1>
+                        <span class="badge">v1.0.0</span>
+                    </div>
+                </div>
+                <div class="header-status">
+                    <div class="status-indicator">
+                        <span class="status-dot"></span>
+                        <span>Operational</span>
+                    </div>
+                </div>
+            </div>
+        </header>
 
+        <!-- Hero Section -->
+        <section class="hero">
+            <h2>OpenAI Compatible API Proxy</h2>
+            <p>Connect to NVIDIA NIM models with a simple OpenAI-compatible interface</p>
+        </section>
+
+        <!-- Main Grid -->
+        <div class="main-grid">
+            <!-- Models Card -->
+            <div class="card models-card">
+                <div class="card-header">
+                    <i class="fas fa-robot"></i>
+                    <h3>Available Models</h3>
+                </div>
+                <div class="models-list" id="modelsList">
+                    <div class="loading-spinner">
+                        <i class="fas fa-spinner fa-spin"></i>
+                        Loading models...
+                    </div>
+                </div>
+            </div>
+
+            <!-- API Info Card -->
+            <div class="card api-card">
+                <div class="card-header">
+                    <i class="fas fa-plug"></i>
+                    <h3>API Endpoint</h3>
+                </div>
+                <div class="api-info">
+                    <div class="endpoint">
+                        <span class="label">Base URL</span>
+                        <div class="endpoint-url">
+                            <code id="baseUrl">Loading...</code>
+                            <button class="copy-btn" onclick="copyToClipboard('baseUrl')">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="endpoint">
+                        <span class="label">Chat Completions</span>
+                        <div class="endpoint-url">
+                            <code id="chatUrl">Loading...</code>
+                            <button class="copy-btn" onclick="copyToClipboard('chatUrl')">
+                                <i class="fas fa-copy"></i>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Setup Guide Card -->
+            <div class="card guide-card">
+                <div class="card-header">
+                    <i class="fas fa-code"></i>
+                    <h3>Quick Setup Guide</h3>
+                </div>
+                <div class="guide-content">
+                    <div class="guide-step">
+                        <span class="step-number">1</span>
+                        <div>
+                            <h4>Set API Key</h4>
+                            <p>Use your NVIDIA NIM API key</p>
+                        </div>
+                    </div>
+                    <div class="guide-step">
+                        <span class="step-number">2</span>
+                        <div>
+                            <h4>Choose Model</h4>
+                            <p>Select from available models above</p>
+                        </div>
+                    </div>
+                    <div class="guide-step">
+                        <span class="step-number">3</span>
+                        <div>
+                            <h4>Make Request</h4>
+                            <p>Use standard OpenAI SDK or curl</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="code-example">
+                    <div class="code-header">
+                        <span>cURL Example</span>
+                        <button class="copy-btn" onclick="copyToClipboard('curlExample')">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                    <pre id="curlExample"><code>curl https://<span id="hostname">your-domain</span>/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "deepseek-v4-flash",
+    "messages": [{"role": "user", "content": "Hello!"}]
+  }'</code></pre>
+                </div>
+
+                <div class="code-example">
+                    <div class="code-header">
+                        <span>Python Example</span>
+                        <button class="copy-btn" onclick="copyToClipboard('pythonExample')">
+                            <i class="fas fa-copy"></i>
+                        </button>
+                    </div>
+                    <pre id="pythonExample"><code>from openai import OpenAI
+
+client = OpenAI(
+    base_url="https://<span id="hostname2">your-domain</span>/v1",
+    api_key="your-nim-api-key"
+)
+
+response = client.chat.completions.create(
+    model="deepseek-v4-flash",
+    messages=[{"role": "user", "content": "Hello!"}]
+)</code></pre>
+                </div>
+            </div>
+
+            <!-- Test Card -->
+            <div class="card test-card">
+                <div class="card-header">
+                    <i class="fas fa-flask"></i>
+                    <h3>Test Connection</h3>
+                </div>
+                <div class="test-controls">
+                    <div class="test-status" id="testStatus">
+                        <i class="fas fa-circle-notch fa-spin"></i>
+                        <span>Ready to test</span>
+                    </div>
+                    <button class="btn btn-primary" onclick="testConnection()">
+                        <i class="fas fa-play"></i>
+                        Test Connection
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Built with <i class="fas fa-heart" style="color: #ff6b6b;"></i> for NVIDIA NIM API</p>
+            <p class="footer-meta">Powered by Express.js</p>
+        </footer>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
