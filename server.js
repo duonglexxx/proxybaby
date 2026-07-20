@@ -16,7 +16,7 @@ const NIM_API_KEY = process.env.NIM_API_KEY;
 
 // Model mapping - Đơn giản và gọn
 const MODEL_MAPPING = {
-  'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash',
+  'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash'
   'glm-5.2': 'z-ai/glm-5.2'
   'kimi-k2.6': 'moonshotai/kimi-k2.6' 
 };
