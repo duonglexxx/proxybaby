@@ -1,155 +1,162 @@
-// server.js
+// server.js - OpenAI to NVIDIA NIM API Proxy
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const NIM_API_KEY = process.env.NIM_API_KEY;
-const NIM_API_BASE = 'https://integrate.api.nvidia.com/v1';
 
-// CORS - QUAN TRỌNG: phải để trước tất cả routes
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
-  credentials: true,
-  preflightContinue: false,
-  optionsSuccessStatus: 204
-}));
-
+// Middleware
+app.use(cors());
 app.use(express.json());
 
-// Model mapping
-const MODELS = {
-  'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash',
+// NVIDIA NIM API configuration
+const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
+const NIM_API_KEY = process.env.NIM_API_KEY;
+
+// Model mapping - Đơn giản và gọn
+const MODEL_MAPPING = {
+  'deepseek-v4': 'deepseek-ai/deepseek-v4-flash',
   'glm-5.2': 'z-ai/glm-5.2',
   'kimi-k2.6': 'moonshotai/kimi-k2.6'
 };
 
-// Health
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', models: Object.keys(MODELS) });
+// Redirect root to chat completions (fix cho Janitor AI)
+app.post('/', (req, res, next) => {
+  req.url = '/v1/chat/completions';
+  next('route');
 });
 
-// Models
-app.get('/v1/models', (req, res) => {
-  res.json({
-    object: 'list',
-    data: Object.keys(MODELS).map(id => ({ id, object: 'model' }))
+app.post('/v1', (req, res, next) => {
+  req.url = '/v1/chat/completions';
+  next('route');
+});
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    service: 'OpenAI to NVIDIA NIM Proxy',
+    models: Object.keys(MODEL_MAPPING)
   });
 });
 
-// CHAT COMPLETIONS - Endpoint chính
+// List models
+app.get('/v1/models', (req, res) => {
+  const models = Object.keys(MODEL_MAPPING).map(model => ({
+    id: model,
+    object: 'model',
+    created: Date.now(),
+    owned_by: 'nvidia-nim-proxy'
+  }));
+  res.json({ object: 'list', data: models });
+});
+
+// Chat completions - Main endpoint
 app.post('/v1/chat/completions', async (req, res) => {
-  console.log('📩 Received POST to /v1/chat/completions');
-  console.log('📦 Body:', JSON.stringify(req.body, null, 2));
-  
   try {
-    const { model, messages, temperature = 0.7, max_tokens = 4096, stream = false } = req.body;
-
-    if (!messages || !Array.isArray(messages)) {
-      return res.status(400).json({
-        error: { message: 'messages is required and must be an array' }
-      });
-    }
-
-    const nimModel = MODELS[model] || 'moonshotai/kimi-k2.6';
+    const { model, messages, temperature, max_tokens, stream } = req.body;
     
-    const payload = {
+    // Chọn model
+    const nimModel = MODEL_MAPPING[model] || 'deepseek-ai/deepseek-v4-flash';
+    
+    // Build request đơn giản
+    const nimRequest = {
       model: nimModel,
-      messages: messages.map(m => ({
-        role: m.role || 'user',
-        content: String(m.content || '')
-      })),
-      temperature,
-      max_tokens: Math.min(max_tokens, 16384),
-      stream: Boolean(stream)
+      messages: messages,
+      temperature: temperature || 0.7,
+      max_tokens: max_tokens || 4096,
+      stream: stream || false
     };
 
-    console.log(`🚀 Forward to: ${nimModel}`);
+    console.log(`📤 ${model} → ${nimModel}`);
 
-    const response = await axios.post(
-      `${NIM_API_BASE}/chat/completions`,
-      payload,
-      {
-        headers: {
-          'Authorization': `Bearer ${NIM_API_KEY}`,
-          'Content-Type': 'application/json'
-        },
-        timeout: 120000
-      }
-    );
-
-    console.log('✅ NIM responded');
-
-    // Trả về OpenAI format
-    res.json({
-      id: `chatcmpl-${Date.now()}`,
-      object: 'chat.completion',
-      created: Math.floor(Date.now() / 1000),
-      model: model,
-      choices: response.data.choices.map(c => ({
-        index: c.index,
-        message: {
-          role: c.message.role,
-          content: c.message.content || ''
-        },
-        finish_reason: c.finish_reason
-      })),
-      usage: response.data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+    // Gọi NVIDIA API
+    const response = await axios.post(`${NIM_API_BASE}/chat/completions`, nimRequest, {
+      headers: {
+        'Authorization': `Bearer ${NIM_API_KEY}`,
+        'Content-Type': 'application/json'
+      },
+      responseType: stream ? 'stream' : 'json',
+      timeout: 60000
     });
 
+    if (stream) {
+      // Xử lý streaming
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      
+      let buffer = '';
+      
+      response.data.on('data', (chunk) => {
+        buffer += chunk.toString();
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        
+        lines.forEach(line => {
+          if (line.startsWith('data: ')) {
+            if (line.includes('[DONE]')) {
+              res.write(line + '\n');
+              return;
+            }
+            res.write(line + '\n');
+          }
+        });
+      });
+      
+      response.data.on('end', () => res.end());
+      response.data.on('error', (err) => {
+        console.error('Stream error:', err);
+        res.end();
+      });
+    } else {
+      // Non-streaming
+      const openaiResponse = {
+        id: `chatcmpl-${Date.now()}`,
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model: model,
+        choices: response.data.choices.map(choice => ({
+          index: choice.index,
+          message: {
+            role: choice.message.role,
+            content: choice.message?.content || ''
+          },
+          finish_reason: choice.finish_reason
+        })),
+        usage: response.data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
+      };
+      res.json(openaiResponse);
+    }
+    
   } catch (error) {
-    console.error('❌ Error:', error.message);
+    console.error('❌ Proxy error:', error.message);
     if (error.response) {
       console.error('Status:', error.response.status);
       console.error('Data:', JSON.stringify(error.response.data, null, 2));
     }
+    
     res.status(error.response?.status || 500).json({
       error: {
-        message: error.response?.data?.error?.message || error.message,
-        type: 'server_error'
+        message: error.message || 'Internal server error',
+        type: 'invalid_request_error',
+        code: error.response?.status || 500
       }
     });
   }
 });
 
-// Tất cả POST requests đều redirect đến /v1/chat/completions
-app.post('*', (req, res) => {
-  console.log(`🔄 Redirect POST ${req.path} → /v1/chat/completions`);
-  // Forward request đến handler chính
-  req.url = '/v1/chat/completions';
-  app.handle(req, res);
-});
-
-// Root GET - trả về info
-app.get('/', (req, res) => {
-  res.json({
-    service: 'OpenAI to NVIDIA NIM Proxy',
-    endpoints: {
-      'POST /v1/chat/completions': 'Main chat endpoint',
-      'POST /': 'Redirect to chat endpoint'
-    },
-    models: Object.keys(MODELS)
-  });
-});
-
-// 404
-app.use((req, res) => {
-  console.log(`❌ 404: ${req.method} ${req.path}`);
+// Catch-all
+app.all('*', (req, res) => {
   res.status(404).json({
-    error: {
-      message: `Endpoint ${req.method} ${req.path} not found`,
-      code: 404
-    }
+    error: { message: `Endpoint ${req.path} not found`, type: 'invalid_request_error', code: 404 }
   });
 });
 
-// Start
+// Start server
 app.listen(PORT, () => {
-  console.log(`\n🚀 Proxy running on port ${PORT}`);
-  console.log(`📡 POST to: http://localhost:${PORT}/v1/chat/completions`);
-  console.log(`🤖 Models: ${Object.keys(MODELS).join(', ')}`);
-  console.log(`🔑 API Key: ${NIM_API_KEY ? '✅ Set' : '❌ MISSING!'}\n`);
+  console.log(`🚀 Proxy running on port ${PORT}`);
+  console.log(`✅ Health: http://localhost:${PORT}/health`);
+  console.log(`🤖 Models: ${Object.keys(MODEL_MAPPING).join(', ')}`);
 });
