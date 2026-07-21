@@ -18,7 +18,7 @@ const MODEL_MAPPING = {
   // Các model mới
   'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash',
   'glm-5.2': 'z-ai/glm-5.2',
-  'kimi-k2.6': 'moonshotai/kimi-k2.6',
+  'kimi-k2.6': 'moonshotai/kimi-k2.6'
 };
 
 // Health check
