@@ -13,15 +13,12 @@ app.use(express.json({ limit: '10mb' }));
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
 const NIM_API_KEY = process.env.NIM_API_KEY;
 
-// Toggle features
-const SHOW_REASONING = process.env.SHOW_REASONING === 'true' || false;
-const ENABLE_THINKING_MODE = process.env.ENABLE_THINKING_MODE === 'true' || false;
-
-// Model mapping with priority
+// Model mapping - Cập nhật với model mới
 const MODEL_MAPPING = {
+  // Các model mới
   'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash',
   'glm-5.2': 'z-ai/glm-5.2',
-  'kimi-k2.6': 'moonshotai/kimi-k2.6'
+  'kimi-k2.6': 'moonshotai/kimi-k2.6',
 };
 
 // Health check
@@ -30,8 +27,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     service: 'OpenAI to NVIDIA NIM Proxy',
     version: '1.0.0',
-    reasoning_display: SHOW_REASONING,
-    thinking_mode: ENABLE_THINKING_MODE,
+    available_models: Object.keys(MODEL_MAPPING),
     timestamp: new Date().toISOString()
   });
 });
@@ -55,7 +51,7 @@ app.get('/v1/models', (req, res) => {
 // Main chat completions endpoint
 app.post('/v1/chat/completions', async (req, res) => {
   try {
-    const { model, messages, temperature, max_tokens, stream, ...rest } = req.body;
+    const { model, messages, temperature, max_tokens, stream } = req.body;
 
     // Validate API key
     if (!NIM_API_KEY) {
@@ -73,11 +69,6 @@ app.post('/v1/chat/completions', async (req, res) => {
       max_tokens: Math.min(max_tokens || 4096, 16384),
       stream: stream || false
     };
-
-    // Add thinking mode if enabled
-    if (ENABLE_THINKING_MODE && supportsThinking(nimModel)) {
-      nimRequest.extra_body = { chat_template_kwargs: { thinking: true } };
-    }
 
     // Make request to NVIDIA NIM
     const response = await axios.post(
@@ -121,24 +112,29 @@ app.post('/v1/chat/completions', async (req, res) => {
 
 // Helper functions
 function getModelMapping(model) {
-  if (!model) return 'meta/llama-3.1-8b-instruct';
+  if (!model) {
+    // Default model nếu không có model được chỉ định
+    return 'deepseek-ai/deepseek-v4-flash';
+  }
   
+  // Kiểm tra trong MODEL_MAPPING
   const mapped = MODEL_MAPPING[model];
   if (mapped) return mapped;
 
-  // Smart fallback
+  // Smart fallback với model mới
   const lower = model.toLowerCase();
-  if (lower.includes('gpt-4') || lower.includes('claude-opus') || lower.includes('405b')) {
-    return 'meta/llama-3.1-405b-instruct';
-  } else if (lower.includes('claude') || lower.includes('gemini') || lower.includes('70b')) {
-    return 'meta/llama-3.1-70b-instruct';
+  
+  // Map các tên model phổ biến sang model mới
+  if (lower.includes('deepseek') || lower.includes('v4') || lower.includes('flash')) {
+    return 'deepseek-ai/deepseek-v4-flash';
+  } else if (lower.includes('glm') || lower.includes('z-ai')) {
+    return 'z-ai/glm-5.2';
+  } else if (lower.includes('kimi') || lower.includes('moonshot')) {
+    return 'moonshotai/kimi-k2.6';
   }
-  return 'meta/llama-3.1-8b-instruct';
-}
-
-function supportsThinking(model) {
-  const thinkingModels = ['qwen/qwen3-next-80b-a3b-thinking', 'qwen/qwen3-coder-480b-a35b-instruct'];
-  return thinkingModels.some(m => model.includes(m));
+  
+  // Fallback cuối cùng
+  return 'deepseek-ai/deepseek-v4-flash';
 }
 
 function handleStreamingResponse(response, res) {
@@ -148,7 +144,6 @@ function handleStreamingResponse(response, res) {
   res.setHeader('X-Accel-Buffering', 'no');
 
   let buffer = '';
-  let reasoningStarted = false;
 
   response.data.on('data', (chunk) => {
     buffer += chunk.toString();
@@ -167,27 +162,13 @@ function handleStreamingResponse(response, res) {
         const data = JSON.parse(line.slice(6));
         if (data.choices?.[0]?.delta) {
           const delta = data.choices[0].delta;
-          const reasoning = delta.reasoning_content;
-          const content = delta.content;
-
-          if (SHOW_REASONING && reasoning) {
-            const formatted = reasoningStarted ? reasoning : `<think>\n${reasoning}`;
-            reasoningStarted = true;
-            delta.content = formatted;
-            
-            if (content) {
-              delta.content += `</think>\n\n${content}`;
-              reasoningStarted = false;
-            }
-          } else if (SHOW_REASONING && content && reasoningStarted) {
-            delta.content = `</think>\n\n${content}`;
-            reasoningStarted = false;
-          } else if (content) {
-            delta.content = content;
+          
+          // Chỉ giữ lại content
+          if (delta.content) {
+            delta.content = delta.content;
           } else {
             delta.content = '';
           }
-          
           delete delta.reasoning_content;
         }
         res.write(`data: ${JSON.stringify(data)}\n\n`);
@@ -213,12 +194,8 @@ function handleNonStreamingResponse(response, res, originalModel) {
     created: Math.floor(Date.now() / 1000),
     model: originalModel,
     choices: data.choices?.map(choice => {
-      let content = choice.message?.content || '';
+      const content = choice.message?.content || '';
       
-      if (SHOW_REASONING && choice.message?.reasoning_content) {
-        content = `<think>\n${choice.message.reasoning_content}\n</think>\n\n${content}`;
-      }
-
       return {
         index: choice.index || 0,
         message: {
@@ -238,7 +215,7 @@ function handleNonStreamingResponse(response, res, originalModel) {
   res.json(transformed);
 }
 
-// Catch-all for 404
+// Catch-all cho 404
 app.all('*', (req, res) => {
   res.status(404).json({
     error: {
@@ -249,5 +226,5 @@ app.all('*', (req, res) => {
   });
 });
 
-// Export for Vercel
+// Export cho Vercel
 module.exports = app;
