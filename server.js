@@ -1,4 +1,4 @@
-// server.js - Optimized for Vercel & Janitor AI
+// server.js - Fixed "Failed to fetch" & Streaming for Janitor AI
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -14,19 +14,16 @@ const MODEL_MAPPING = {
   'kimi-k2.6': 'moonshotai/kimi-k2.6'
 };
 
-app.use(cors());
+// ✅ FIX 1: CORS chi tiết cho Janitor AI Mobile App
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 app.use(express.json({ limit: '50mb' }));
 
-// ✅ FIX: GET / trả JSON ngay, KHÔNG redirect
-app.get('/', (req, res) => {
-  res.json({ 
-    status: 'ok', 
-    service: 'NVIDIA NIM Proxy', 
-    models: Object.keys(MODEL_MAPPING),
-    platform: 'vercel' 
-  });
-});
-
+// Health check & Root endpoint
+app.get('/', (req, res) => res.json({ status: 'ok', service: 'NVIDIA NIM Proxy' }));
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: Date.now() }));
 
 app.get('/v1/models', (req, res) => {
@@ -36,7 +33,7 @@ app.get('/v1/models', (req, res) => {
   res.json({ object: 'list', data });
 });
 
-// Hàm xử lý chat chung
+// Hàm xử lý chat chung (loại bỏ redirect gây lỗi)
 const handleChat = async (req, res) => {
   try {
     const { model, messages, temperature, max_tokens, stream, extra_body } = req.body;
@@ -50,7 +47,7 @@ const handleChat = async (req, res) => {
       temperature: temperature ?? 0.7,
       max_tokens: max_tokens ?? 4096,
       stream: !!stream,
-      ...(extra_body && { extra_body }) // Hỗ trợ thinking/reasoning
+      ...(extra_body && { extra_body })
     };
 
     const response = await axios.post(`${NIM_API_BASE}/chat/completions`, payload, {
@@ -63,14 +60,14 @@ const handleChat = async (req, res) => {
     });
 
     if (stream) {
-      // ✅ FIX QUAN TRỌNG CHO VERCEL: Headers chuẩn SSE + Tắt Buffering
+      // ✅ FIX 2: Headers chuẩn SSE + Tắt Buffering (nguyên nhân chính gây "Failed to fetch")
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no', 
+        'X-Accel-Buffering': 'no', // Quan trọng nhất cho Railway/Vercel
         'Transfer-Encoding': 'chunked',
-        'Access-Control-Allow-Origin': '*' // Đảm bảo CORS cho stream
+        'Access-Control-Allow-Origin': '*'
       });
 
       let buffer = '';
@@ -81,7 +78,7 @@ const handleChat = async (req, res) => {
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
-            // ✅ FIX: Double newline chuẩn SSE
+            // ✅ FIX 3: Double newline chuẩn SSE
             res.write(line + '\n\n');
           }
         }
@@ -120,7 +117,7 @@ const handleChat = async (req, res) => {
   }
 };
 
-// ✅ FIX: Gọi trực tiếp hàm, KHÔNG dùng next('route')
+// ✅ FIX 4: Gọi trực tiếp hàm, KHÔNG dùng next('route')
 app.post('/', handleChat);
 app.post('/v1', handleChat);
 app.post('/v1/chat/completions', handleChat);
@@ -131,4 +128,5 @@ app.all('*', (req, res) => res.status(404).json({
 
 app.listen(PORT, () => {
   console.log(`🚀 Proxy running on port ${PORT}`);
+  console.log(`✅ Health: http://localhost:${PORT}/health`);
 });
