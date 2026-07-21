@@ -1,4 +1,4 @@
-// server.js - OpenAI to NVIDIA NIM Proxy (Fixed 499 & Redirect Issues)
+// server.js - Fixed NVIDIA NIM Proxy for Janitor AI & Railway
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -16,15 +16,14 @@ const MODEL_MAPPING = {
 };
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
-// ✅ FIX 1: GET / trả về JSON trực tiếp, KHÔNG redirect (tránh loop/timeout với Janitor)
+// ✅ FIX 1: GET / trả JSON ngay (tránh 404 khi JA ping health)
 app.get('/', (req, res) => {
   res.json({ 
     status: 'ok', 
     service: 'NVIDIA NIM Proxy', 
-    models: Object.keys(MODEL_MAPPING),
-    note: 'Use POST / or POST /v1/chat/completions for chat' 
+    models: Object.keys(MODEL_MAPPING) 
   });
 });
 
@@ -37,63 +36,81 @@ app.get('/v1/models', (req, res) => {
   res.json({ object: 'list', data });
 });
 
-// Hàm xử lý chat chung (dùng cho cả /, /v1, /v1/chat/completions)
+// Hàm xử lý chat chung (dùng cho /, /v1, /v1/chat/completions)
 const handleChat = async (req, res) => {
   try {
-    const { model, messages, temperature, max_tokens, stream } = req.body;
+    const { model, messages, temperature, max_tokens, stream, top_p, seed, extra_body } = req.body;
     const nimModel = MODEL_MAPPING[model] || 'deepseek-ai/deepseek-v4-flash';
     
     console.log(`📤 [${req.method} ${req.path}] ${model} → ${nimModel}`);
     
-    // ✅ FIX 2: Giảm timeout xuống 30s để tránh giữ connection quá lâu gây 499
-    const response = await axios.post(`${NIM_API_BASE}/chat/completions`, {
-      model: nimModel, 
-      messages, 
-      temperature: temperature ?? 0.7, 
-      max_tokens: max_tokens ?? 4096, 
-      stream: !!stream
-    }, {
-      headers: { Authorization: `Bearer ${NIM_API_KEY}`, 'Content-Type': 'application/json' },
-      responseType: stream ? 'stream' : 'json', 
-      timeout: 30000 
+    // Build payload chuẩn NVIDIA NIM (hỗ trợ extra_body như Python SDK)
+    const payload = {
+      model: nimModel,
+      messages,
+      temperature: temperature ?? 0.7,
+      max_tokens: max_tokens ?? 4096,
+      top_p: top_p ?? 1,
+      seed: seed ?? null,
+      stream: !!stream,
+      ...(extra_body && { extra_body })
+    };
+
+    const response = await axios.post(`${NIM_API_BASE}/chat/completions`, payload, {
+      headers: { 
+        Authorization: `Bearer ${NIM_API_KEY}`, 
+        'Content-Type': 'application/json' 
+      },
+      responseType: stream ? 'stream' : 'json',
+      timeout: 60000
     });
 
     if (stream) {
+      // ✅ FIX 2: Headers chuẩn SSE + Tắt Buffering Railway
       res.writeHead(200, {
-        'Content-Type': 'text/event-stream', 
-        'Cache-Control': 'no-cache', 
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no' // ✅ FIX 3: Tắt buffering của Nginx/Railway
+        'X-Accel-Buffering': 'no',
+        'Transfer-Encoding': 'chunked'
       });
-      
+
       let buffer = '';
-      response.data.on('data', chunk => {
+      response.data.on('data', (chunk) => {
         buffer += chunk.toString();
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
-        
+
         for (const line of lines) {
           if (line.startsWith('data: ')) {
-            res.write(line + '\n\n'); // ✅ FIX 4: Double newline chuẩn SSE
+            // ✅ FIX 3: Double newline chuẩn SSE
+            res.write(line + '\n\n');
           }
         }
       });
+
       response.data.on('end', () => res.end());
       response.data.on('error', () => res.end());
     } else {
       res.json({
-        id: `chatcmpl-${Date.now()}`, object: 'chat.completion',
-        created: Math.floor(Date.now() / 1000), model,
+        id: `chatcmpl-${Date.now()}`,
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model,
         choices: response.data.choices.map(c => ({
-          index: c.index, message: { role: c.message.role, content: c.message?.content || '' },
+          index: c.index,
+          message: {
+            role: c.message.role,
+            content: c.message?.content || '',
+            reasoning_content: c.message?.reasoning_content // Hỗ trợ reasoning
+          },
           finish_reason: c.finish_reason
         })),
         usage: response.data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
       });
     }
   } catch (err) {
-    console.error(' Error:', err.response?.status, err.message);
-    // Nếu lỗi từ NVIDIA, trả về đúng status code để client biết
+    console.error('❌ Error:', err.response?.status, err.message);
     const status = err.response?.status || 500;
     res.status(status).json({
       error: { 
@@ -105,14 +122,16 @@ const handleChat = async (req, res) => {
   }
 };
 
-// ✅ FIX 5: Gọi trực tiếp hàm handleChat, KHÔNG dùng next('route')
+// ✅ FIX 4: Gọi trực tiếp hàm, KHÔNG dùng next('route')
 app.post('/', handleChat);
 app.post('/v1', handleChat);
 app.post('/v1/chat/completions', handleChat);
 
-// Catch-all 404
-app.all('*', (req, res) => res.status(404).json({ 
-  error: { message: `Not found: ${req.path}`, type: 'invalid_request_error', code: 404 } 
+app.all('*', (req, res) => res.status(404).json({
+  error: { message: `Not found: ${req.path}`, type: 'invalid_request_error', code: 404 }
 }));
 
-app.listen(PORT, () => console.log(`🚀 Proxy running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 Proxy running on port ${PORT}`);
+  console.log(`✅ Health: http://localhost:${PORT}/health`);
+});
