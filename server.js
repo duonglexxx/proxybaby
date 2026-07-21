@@ -1,97 +1,253 @@
-// server.js - Fixed for Janitor AI POST / & Streaming
+// server.js - OpenAI to NVIDIA NIM API Proxy (Optimized for Vercel)
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+
+// Middleware
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
+
+// Configuration
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
 const NIM_API_KEY = process.env.NIM_API_KEY;
 
+// Toggle features
+const SHOW_REASONING = process.env.SHOW_REASONING === 'true' || false;
+const ENABLE_THINKING_MODE = process.env.ENABLE_THINKING_MODE === 'true' || false;
+
+// Model mapping with priority
 const MODEL_MAPPING = {
   'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash',
   'glm-5.2': 'z-ai/glm-5.2',
   'kimi-k2.6': 'moonshotai/kimi-k2.6'
 };
 
-// CORS chi tiết cho JA Mobile
-app.use(cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'] }));
-app.use(express.json({ limit: '50mb' }));
-
-// Health check & Root GET
-app.get('/', (req, res) => res.json({ status: 'ok', service: 'NVIDIA NIM Proxy' }));
-app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: Date.now() }));
-app.get('/v1/models', (req, res) => {
-  const data = Object.keys(MODEL_MAPPING).map(id => ({
-    id, object: 'model', created: Date.now(), owned_by: 'nvidia-nim-proxy'
-  }));
-  res.json({ object: 'list', data });
+// Health check
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'OpenAI to NVIDIA NIM Proxy',
+    version: '1.0.0',
+    reasoning_display: SHOW_REASONING,
+    thinking_mode: ENABLE_THINKING_MODE,
+    timestamp: new Date().toISOString()
+  });
 });
 
-// ✅ FIX: Hàm xử lý chat chung, gọi TRỰC TIẾP tại route POST /
-const handleChat = async (req, res) => {
+// List models
+app.get('/v1/models', (req, res) => {
+  const models = Object.keys(MODEL_MAPPING).map(model => ({
+    id: model,
+    object: 'model',
+    created: Math.floor(Date.now() / 1000),
+    owned_by: 'nvidia-nim-proxy',
+    permission: []
+  }));
+
+  res.json({
+    object: 'list',
+    data: models
+  });
+});
+
+// Main chat completions endpoint
+app.post('/v1/chat/completions', async (req, res) => {
   try {
-    const { model, messages, temperature, max_tokens, stream, extra_body } = req.body;
-    const nimModel = MODEL_MAPPING[model] || 'deepseek-ai/deepseek-v4-flash';
-    
-    console.log(`📤 [${req.method} ${req.path}] ${model} → ${nimModel}`);
-    
-    const payload = {
-      model: nimModel, messages, temperature: temperature ?? 0.7,
-      max_tokens: max_tokens ?? 4096, stream: !!stream,
-      ...(extra_body && { extra_body })
+    const { model, messages, temperature, max_tokens, stream, ...rest } = req.body;
+
+    // Validate API key
+    if (!NIM_API_KEY) {
+      throw new Error('NIM_API_KEY is not configured');
+    }
+
+    // Smart model selection
+    let nimModel = getModelMapping(model);
+
+    // Transform request
+    const nimRequest = {
+      model: nimModel,
+      messages: messages,
+      temperature: temperature || 0.7,
+      max_tokens: Math.min(max_tokens || 4096, 16384),
+      stream: stream || false
     };
 
-    const response = await axios.post(`${NIM_API_BASE}/chat/completions`, payload, {
-      headers: { Authorization: `Bearer ${NIM_API_KEY}`, 'Content-Type': 'application/json' },
-      responseType: stream ? 'stream' : 'json', timeout: 60000
-    });
-
-    if (stream) {
-      // ✅ FIX QUAN TRỌNG: Tắt Buffering + Double Newline SSE
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive', 'X-Accel-Buffering': 'no',
-        'Transfer-Encoding': 'chunked', 'Access-Control-Allow-Origin': '*'
-      });
-
-      let buffer = '';
-      response.data.on('data', (chunk) => {
-        buffer += chunk.toString();
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-        for (const line of lines) {
-          if (line.startsWith('data: ')) res.write(line + '\n\n'); // ✅ \n\n chuẩn SSE
-        }
-      });
-      response.data.on('end', () => res.end());
-      response.data.on('error', () => res.end());
-    } else {
-      res.json({
-        id: `chatcmpl-${Date.now()}`, object: 'chat.completion',
-        created: Math.floor(Date.now() / 1000), model,
-        choices: response.data.choices.map(c => ({
-          index: c.index, message: { role: c.message.role, content: c.message?.content || '' },
-          finish_reason: c.finish_reason
-        })),
-        usage: response.data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 }
-      });
+    // Add thinking mode if enabled
+    if (ENABLE_THINKING_MODE && supportsThinking(nimModel)) {
+      nimRequest.extra_body = { chat_template_kwargs: { thinking: true } };
     }
-  } catch (err) {
-    console.error('❌ Error:', err.response?.status, err.message);
-    res.status(err.response?.status || 500).json({
-      error: { message: err.response?.data?.error?.message || err.message, type: 'proxy_error', code: err.response?.status || 500 }
+
+    // Make request to NVIDIA NIM
+    const response = await axios.post(
+      `${NIM_API_BASE}/chat/completions`,
+      nimRequest,
+      {
+        headers: {
+          'Authorization': `Bearer ${NIM_API_KEY}`,
+          'Content-Type': 'application/json',
+          'Accept': stream ? 'text/event-stream' : 'application/json'
+        },
+        timeout: 120000,
+        responseType: stream ? 'stream' : 'json',
+        validateStatus: (status) => status < 500
+      }
+    );
+
+    // Handle streaming
+    if (stream) {
+      return handleStreamingResponse(response, res);
+    }
+
+    // Handle non-streaming
+    return handleNonStreamingResponse(response, res, model);
+
+  } catch (error) {
+    console.error('Proxy error:', error.message);
+    
+    const statusCode = error.response?.status || 500;
+    const errorMessage = error.response?.data?.error?.message || error.message || 'Internal server error';
+    
+    res.status(statusCode).json({
+      error: {
+        message: errorMessage,
+        type: 'api_error',
+        code: statusCode
+      }
     });
   }
-};
+});
 
-// ✅ FIX: Gọi trực tiếp handleChat, KHÔNG dùng next('route')
-app.post('/', handleChat);
-app.post('/v1', handleChat);
-app.post('/v1/chat/completions', handleChat);
+// Helper functions
+function getModelMapping(model) {
+  if (!model) return 'meta/llama-3.1-8b-instruct';
+  
+  const mapped = MODEL_MAPPING[model];
+  if (mapped) return mapped;
 
-app.all('*', (req, res) => res.status(404).json({
-  error: { message: `Not found: ${req.path}`, type: 'invalid_request_error', code: 404 }
-}));
+  // Smart fallback
+  const lower = model.toLowerCase();
+  if (lower.includes('gpt-4') || lower.includes('claude-opus') || lower.includes('405b')) {
+    return 'meta/llama-3.1-405b-instruct';
+  } else if (lower.includes('claude') || lower.includes('gemini') || lower.includes('70b')) {
+    return 'meta/llama-3.1-70b-instruct';
+  }
+  return 'meta/llama-3.1-8b-instruct';
+}
 
-app.listen(PORT, () => console.log(`🚀 Proxy running on port ${PORT}`));
+function supportsThinking(model) {
+  const thinkingModels = ['qwen/qwen3-next-80b-a3b-thinking', 'qwen/qwen3-coder-480b-a35b-instruct'];
+  return thinkingModels.some(m => model.includes(m));
+}
+
+function handleStreamingResponse(response, res) {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+
+  let buffer = '';
+  let reasoningStarted = false;
+
+  response.data.on('data', (chunk) => {
+    buffer += chunk.toString();
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    lines.forEach(line => {
+      if (!line.startsWith('data: ')) return;
+      
+      if (line.includes('[DONE]')) {
+        res.write('data: [DONE]\n\n');
+        return;
+      }
+
+      try {
+        const data = JSON.parse(line.slice(6));
+        if (data.choices?.[0]?.delta) {
+          const delta = data.choices[0].delta;
+          const reasoning = delta.reasoning_content;
+          const content = delta.content;
+
+          if (SHOW_REASONING && reasoning) {
+            const formatted = reasoningStarted ? reasoning : `<think>\n${reasoning}`;
+            reasoningStarted = true;
+            delta.content = formatted;
+            
+            if (content) {
+              delta.content += `</think>\n\n${content}`;
+              reasoningStarted = false;
+            }
+          } else if (SHOW_REASONING && content && reasoningStarted) {
+            delta.content = `</think>\n\n${content}`;
+            reasoningStarted = false;
+          } else if (content) {
+            delta.content = content;
+          } else {
+            delta.content = '';
+          }
+          
+          delete delta.reasoning_content;
+        }
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      } catch (e) {
+        res.write(`${line}\n`);
+      }
+    });
+  });
+
+  response.data.on('end', () => res.end());
+  response.data.on('error', (err) => {
+    console.error('Stream error:', err);
+    res.end();
+  });
+}
+
+function handleNonStreamingResponse(response, res, originalModel) {
+  const data = response.data;
+  
+  const transformed = {
+    id: data.id || `chatcmpl-${Date.now()}`,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model: originalModel,
+    choices: data.choices?.map(choice => {
+      let content = choice.message?.content || '';
+      
+      if (SHOW_REASONING && choice.message?.reasoning_content) {
+        content = `<think>\n${choice.message.reasoning_content}\n</think>\n\n${content}`;
+      }
+
+      return {
+        index: choice.index || 0,
+        message: {
+          role: choice.message?.role || 'assistant',
+          content: content
+        },
+        finish_reason: choice.finish_reason || 'stop'
+      };
+    }) || [],
+    usage: data.usage || {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0
+    }
+  };
+
+  res.json(transformed);
+}
+
+// Catch-all for 404
+app.all('*', (req, res) => {
+  res.status(404).json({
+    error: {
+      message: `Endpoint ${req.path} not found`,
+      type: 'invalid_request_error',
+      code: 404
+    }
+  });
+});
+
+// Export for Vercel
+module.exports = app;
