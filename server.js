@@ -13,10 +13,9 @@ app.use(express.json({ limit: '10mb' }));
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
 const NIM_API_KEY = process.env.NIM_API_KEY;
 
-// Model mapping - Cập nhật với model mới
+// Model mapping - Chính xác theo từng model
 const MODEL_MAPPING = {
-  // Các model mới
-  'deepseek-v4-flash': 'deepseek-ai/deepseek-v4-flash',
+  'step-3.7-flash': 'stepfun-ai/step-3.7-flash',
   'glm-5.2': 'z-ai/glm-5.2',
   'minimax-m3': 'minimaxai/minimax-m3',
 };
@@ -51,22 +50,33 @@ app.get('/v1/models', (req, res) => {
 // Main chat completions endpoint
 app.post('/v1/chat/completions', async (req, res) => {
   try {
-    const { model, messages, temperature, max_tokens, stream } = req.body;
+    const { model, messages, temperature, max_tokens, stream, top_p, frequency_penalty, presence_penalty } = req.body;
 
     // Validate API key
     if (!NIM_API_KEY) {
       throw new Error('NIM_API_KEY is not configured');
     }
 
-    // Smart model selection
-    let nimModel = getModelMapping(model);
+    // Validate model
+    if (!model) {
+      throw new Error('Model is required');
+    }
 
-    // Transform request
+    // Lấy đúng model mapping, không fallback
+    const nimModel = MODEL_MAPPING[model];
+    if (!nimModel) {
+      throw new Error(`Model "${model}" is not supported. Available models: ${Object.keys(MODEL_MAPPING).join(', ')}`);
+    }
+
+    // Transform request với các tham số tối ưu
     const nimRequest = {
       model: nimModel,
       messages: messages,
-      temperature: temperature || 0.7,
-      max_tokens: Math.min(max_tokens || 4096, 16384),
+      temperature: temperature !== undefined ? temperature : 0.8,
+      max_tokens: Math.min(max_tokens || 8192, 32768),
+      top_p: top_p || 0.95,
+      frequency_penalty: frequency_penalty !== undefined ? frequency_penalty : 0.1,
+      presence_penalty: presence_penalty !== undefined ? presence_penalty : 0.1,
       stream: stream || false
     };
 
@@ -80,7 +90,7 @@ app.post('/v1/chat/completions', async (req, res) => {
           'Content-Type': 'application/json',
           'Accept': stream ? 'text/event-stream' : 'application/json'
         },
-        timeout: 120000,
+        timeout: 180000,
         responseType: stream ? 'stream' : 'json',
         validateStatus: (status) => status < 500
       }
@@ -110,33 +120,6 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 });
 
-// Helper functions
-function getModelMapping(model) {
-  if (!model) {
-    // Default model nếu không có model được chỉ định
-    return 'deepseek-ai/deepseek-v4-flash';
-  }
-  
-  // Kiểm tra trong MODEL_MAPPING
-  const mapped = MODEL_MAPPING[model];
-  if (mapped) return mapped;
-
-  // Smart fallback với model mới
-  const lower = model.toLowerCase();
-  
-  // Map các tên model phổ biến sang model mới
-  if (lower.includes('deepseek') || lower.includes('v4') || lower.includes('flash')) {
-    return 'deepseek-ai/deepseek-v4-flash';
-  } else if (lower.includes('glm') || lower.includes('z-ai')) {
-    return 'z-ai/glm-5.2';
-  } else if (lower.includes('kimi') || lower.includes('moonshot')) {
-    return 'moonshotai/kimi-k2.6';
-  }
-  
-  // Fallback cuối cùng
-  return 'deepseek-ai/deepseek-v4-flash';
-}
-
 function handleStreamingResponse(response, res) {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -163,7 +146,6 @@ function handleStreamingResponse(response, res) {
         if (data.choices?.[0]?.delta) {
           const delta = data.choices[0].delta;
           
-          // Chỉ giữ lại content
           if (delta.content) {
             delta.content = delta.content;
           } else {
