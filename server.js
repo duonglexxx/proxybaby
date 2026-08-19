@@ -13,11 +13,10 @@ const NIM_API_KEY = process.env.NIM_API_KEY;
 
 // 1. Endpoint trả về thông tin chung cho app chat
 app.get('/v1/models', (req, res) => {
-  // Trả về một phản hồi giả lập để app chat không báo lỗi
   res.json({
     object: 'list',
     data: [{
-      id: 'dynamic-model', // Tên gợi ý cho UI
+      id: 'dynamic-model',
       object: 'model',
       created: Math.floor(Date.now() / 1000),
       owned_by: 'nvidia-nim',
@@ -33,13 +32,15 @@ app.post('/v1/chat/completions', async (req, res) => {
     if (!model) throw new Error('Model name is required');
     if (!NIM_API_KEY) throw new Error('NIM_API_KEY is not configured');
 
-    // NHẬN GÌ GỬI NẤY: Sử dụng trực tiếp tên model client gửi lên
+    // Cấu hình request gửi sang NVIDIA NIM
     const nimRequest = {
       model: model, 
       messages: messages,
       temperature: temperature ?? 0.8,
       max_tokens: max_tokens ?? 8192,
       stream: stream ?? false,
+      // ÉP BUỘC TẮT SUY NGHĨ (Reasoning):
+      chat_template_kwargs: { "enable_thinking": false },
       ...rest
     };
 
@@ -69,10 +70,18 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 });
 
-// (Giữ nguyên các hàm xử lý stream như cũ để đảm bảo không bị lỗi dữ liệu)
+// Hàm xử lý streaming giữ nguyên để đảm bảo tính ổn định
 function handleStreamingResponse(response, res) {
   res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  
   response.data.pipe(res);
+  
+  response.data.on('error', (err) => {
+    console.error('Stream Error:', err);
+    res.end();
+  });
 }
 
 module.exports = app;
