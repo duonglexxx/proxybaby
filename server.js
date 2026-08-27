@@ -1,4 +1,4 @@
-// server.js - OpenAI to NVIDIA NIM API Proxy (FULL VERSION)
+// server.js - OpenAI to NVIDIA NIM API Proxy (SPEED OPTIMIZED)
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
@@ -12,11 +12,22 @@ app.use(express.json({ limit: '10mb' }));
 const NIM_API_BASE = process.env.NIM_API_BASE || 'https://integrate.api.nvidia.com/v1';
 const NIM_API_KEY = process.env.NIM_API_KEY;
 
-// 📌 CẤU HÌNH QUAN TRỌNG
-const SHOW_REASONING = false;
-const ENABLE_THINKING_MODE = false;
+// 📌 CẤU HÌNH TỐI ƯU TỐC ĐỘ
+const CONFIG = {
+  // Giảm temperature để response nhanh hơn (ít random hơn)
+  temperature: 0.3,
+  
+  // Giảm max_tokens để response nhanh hơn
+  max_tokens: 1024,
+  
+  // Timeout ngắn hơn
+  timeout: 30000, // 30 giây
+  
+  // Tắt thinking mode để nhanh hơn
+  enable_thinking: false
+};
 
-// 📌 MODEL MAPPING - Cái này giúp chuyển đổi tên model
+// 📌 MODEL MAPPING
 const MODEL_MAPPING = {
   'deepseek-v4-flash-0731': 'deepseek-ai/deepseek-v4-flash-0731',
   'minimax-m3': 'minimaxai/minimax-m3'
@@ -24,10 +35,10 @@ const MODEL_MAPPING = {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'OpenAI to NVIDIA NIM Proxy' });
+  res.json({ status: 'ok', service: 'OpenAI to NVIDIA NIM Proxy (Speed Optimized)' });
 });
 
-// 📌 ENDPOINT /v1/models - Trả về danh sách model hỗ trợ
+// 📌 ENDPOINT /v1/models
 app.get('/v1/models', (req, res) => {
   const models = Object.keys(MODEL_MAPPING).map(model => ({
     id: model,
@@ -42,7 +53,7 @@ app.get('/v1/models', (req, res) => {
   });
 });
 
-// 📌 ENDPOINT CHAT COMPLETIONS - XỬ LÝ THÔNG MINH
+// 📌 ENDPOINT CHAT COMPLETIONS - TỐI ƯU TỐC ĐỘ
 app.post('/v1/chat/completions', async (req, res) => {
   try {
     const { model, messages, temperature, max_tokens, stream } = req.body;
@@ -55,38 +66,37 @@ app.post('/v1/chat/completions', async (req, res) => {
       return res.status(500).json({ error: { message: 'NIM_API_KEY not configured' } });
     }
 
-    // 🔥 SMART MODEL SELECTION - Tự động chọn model phù hợp
+    // 🔥 SMART MODEL SELECTION - Ưu tiên model nhanh nhất
     let nimModel = MODEL_MAPPING[model];
     
     if (!nimModel) {
-      // Fallback logic thông minh
-      const modelLower = model.toLowerCase();
-      if (modelLower.includes('gpt-4') || modelLower.includes('claude-opus')) {
-        nimModel = 'meta/llama-3.1-405b-instruct';
-      } else if (modelLower.includes('claude') || modelLower.includes('gemini')) {
-        nimModel = 'meta/llama-3.1-70b-instruct';
-      } else {
-        nimModel = 'meta/llama-3.1-8b-instruct';
-      }
+      // Luôn chọn model nhanh nhất (8B)
+      nimModel = 'meta/llama-3.1-8b-instruct';
     }
 
     console.log(`🔄 Mapping: ${model} → ${nimModel}`);
 
-    // Xây dựng request
+    // Xây dựng request - Tối ưu cho tốc độ
     const nimRequest = {
       model: nimModel,
       messages: messages,
-      temperature: temperature ?? 0.6,
-      max_tokens: max_tokens ?? 9024,
-      stream: stream ?? false
+      // Ưu tiên giá trị từ request, nếu không thì dùng config speed
+      temperature: temperature !== undefined ? Math.min(temperature, 0.5) : CONFIG.temperature,
+      max_tokens: max_tokens !== undefined ? Math.min(max_tokens, 2048) : CONFIG.max_tokens,
+      stream: stream ?? false,
+      // Thêm top_p thấp để focus hơn, response nhanh hơn
+      top_p: 0.8
     };
 
-    // Thêm thinking mode nếu cần
-    if (ENABLE_THINKING_MODE) {
+    // KHÔNG bật thinking mode để nhanh hơn
+    if (CONFIG.enable_thinking) {
       nimRequest.chat_template_kwargs = { thinking: false };
     }
 
-    // Gửi sang NVIDIA
+    console.log(`⏱️ Sending request with speed optimization...`);
+    const startTime = Date.now();
+
+    // Gửi sang NVIDIA với timeout ngắn
     const response = await axios.post(
       `${NIM_API_BASE}/chat/completions`,
       nimRequest,
@@ -95,10 +105,13 @@ app.post('/v1/chat/completions', async (req, res) => {
           'Authorization': `Bearer ${NIM_API_KEY}`,
           'Content-Type': 'application/json'
         },
-        timeout: 180000,
+        timeout: CONFIG.timeout,
         responseType: stream ? 'stream' : 'json'
       }
     );
+
+    const elapsed = Date.now() - startTime;
+    console.log(`✅ Response in ${elapsed}ms`);
 
     // Xử lý streaming
     if (stream) {
@@ -110,7 +123,7 @@ app.post('/v1/chat/completions', async (req, res) => {
       return;
     }
 
-    // Transform response về OpenAI format
+    // Transform response
     const openaiResponse = {
       id: `chatcmpl-${Date.now()}`,
       object: 'chat.completion',
@@ -131,6 +144,18 @@ app.post('/v1/chat/completions', async (req, res) => {
 
   } catch (error) {
     console.error('❌ Proxy Error:', error.message);
+    
+    // Xử lý timeout
+    if (error.code === 'ECONNABORTED') {
+      return res.status(504).json({
+        error: {
+          message: 'Request timeout - please try again',
+          type: 'timeout_error',
+          code: 504
+        }
+      });
+    }
+    
     if (error.response) {
       console.error('📥 Status:', error.response.status);
       console.error('📥 Data:', error.response.data);
@@ -147,7 +172,7 @@ app.post('/v1/chat/completions', async (req, res) => {
   }
 });
 
-// 📌 CATCH-ALL - Bắt các endpoint không tồn tại
+// 📌 CATCH-ALL
 app.all('*', (req, res) => {
   res.status(404).json({
     error: {
@@ -159,7 +184,12 @@ app.all('*', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Proxy running on port ${PORT}`);
+  console.log(`🚀 Speed-optimized Proxy running on port ${PORT}`);
   console.log(`✅ Health: http://localhost:${PORT}/health`);
   console.log(`📋 Models: http://localhost:${PORT}/v1/models`);
+  console.log(`\n⚡ Speed Config:`);
+  console.log(`   Temperature: ${CONFIG.temperature} (low for speed)`);
+  console.log(`   Max Tokens: ${CONFIG.max_tokens} (limited for speed)`);
+  console.log(`   Timeout: ${CONFIG.timeout/1000}s`);
+  console.log(`   Thinking Mode: OFF`);
 });
