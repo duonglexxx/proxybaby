@@ -18,7 +18,7 @@ const NIM_API_KEY = process.env.NIM_API_KEY;
 const ALLOWED_MODELS = {
   'deepseek-v4-flash-0731': 'deepseek-ai/deepseek-v4-flash-0731',
   'minimax-m3': 'minimaxai/minimax-m3',
-  'meta/llama-3.1-405b-instruct': 'meta/llama-3.1-405b-instruct',
+  'kimi-k3': 'moonshotai/kimi-k3',
   'meta/llama-3.1-70b-instruct': 'meta/llama-3.1-70b-instruct',
   'meta/llama-3.1-8b-instruct': 'meta/llama-3.1-8b-instruct'
   // Bạn có thể thêm các model khác của NVIDIA vào đây
