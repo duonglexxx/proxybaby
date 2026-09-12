@@ -19,7 +19,7 @@ const ALLOWED_MODELS = {
   'deepseek-v4-flash-0731': 'deepseek-ai/deepseek-v4-flash-0731',
   'minimax-m3': 'minimaxai/minimax-m3',
   'kimi-k3': 'moonshotai/kimi-k3',
-  'meta/llama-3.1-70b-instruct': 'meta/llama-3.1-70b-instruct',
+  'nemotron-3.5-lightning-30b-a3b': 'nvidia/nemotron-3.5-lightning-30b-a3b',
   'meta/llama-3.1-8b-instruct': 'meta/llama-3.1-8b-instruct'
   // Bạn có thể thêm các model khác của NVIDIA vào đây
 };
