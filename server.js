@@ -17,7 +17,7 @@ const NIM_API_KEY = process.env.NIM_API_KEY;
 // Nếu client gọi đúng tên chuẩn rồi thì để giống nhau.
 const ALLOWED_MODELS = {
   'deepseek-v4-flash-0731': 'deepseek-ai/deepseek-v4-flash-0731',
-  'minimax-m3': 'minimaxai/minimax-m3',
+  'glm-5.3': 'z-ai/glm-5.3',
   'kimi-k3': 'moonshotai/kimi-k3',
   'nemotron-3.5-lightning-30b-a3b': 'nvidia/nemotron-3.5-lightning-30b-a3b',
   'meta/llama-3.1-8b-instruct': 'meta/llama-3.1-8b-instruct'
