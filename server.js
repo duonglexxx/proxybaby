@@ -17,7 +17,7 @@ const TIMEOUT_MS = Number(process.env.NIM_TIMEOUT_MS) || 180_000;
 
 // 📌 Whitelist: client model name → NIM model id
 const ALLOWED_MODELS = Object.freeze({
-  'deepseek-v4-flash-0731': 'deepseek-ai/deepseek-v4-flash-0731',
+  'muse-glimmer-30b': 'meta/muse-glimmer-30b',
   'glm-5.3': 'z-ai/glm-5.3',
   'kimi-k3': 'moonshotai/kimi-k3',
   'nemotron-3.5-lightning-30b-a3b': 'nvidia/nemotron-3.5-lightning-30b-a3b',
